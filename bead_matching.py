@@ -9,6 +9,7 @@ import editdistance
 from multiprocessing import Pool
 import logging
 import argparse
+import numpy as np
 
 bead_barcode_dir = "/path/to/Barcodes"
 
@@ -38,44 +39,55 @@ def build_6mer_dist(bc_list):
     return start_km,mid_km,end_km
 
 
-def barcode_matching(bc_pos_dict,spatial_bc_list,max_dist=1):
+def barcode_matching(bc_pos_dict, spatial_bc_list, max_dist=1):
     bc_matching_dict = {}
-    def get_sel_bc(bc):
-        res = []
-        if bc[:6] in start_km:
-            res += start_km[bc[:6]]
-        if bc[-6:] in end_km:
-            res += end_km[bc[-6:]]
-        if bc[4:10] in mid_km:
-            res += mid_km[bc[4:10]]
-        return set(res)
-    exact_match = 0
-    fuzzy_match =0
     bc_ref_list = list(bc_pos_dict.keys())
-    start_km,mid_km,end_km = build_6mer_dist(bc_ref_list)
-    for bc in spatial_bc_list:
+    start_km, mid_km, end_km = build_6mer_dist(bc_ref_list)
+    exact_match = 0
+    fuzzy_match = 0
+
+    bc_list_array = np.array(bc_ref_list)
+    spatial_bc_array = np.array(spatial_bc_list)
+
+    start_km_array = np.array(list(start_km.keys()))
+    mid_km_array = np.array(list(mid_km.keys()))
+    end_km_array = np.array(list(end_km.keys()))
+
+    for bc in spatial_bc_array:
         if bc in bc_pos_dict:
             exact_match += 1
             bc_matching_dict[bc] = bc
         else:
-            sel_bc = get_sel_bc(bc)
-            if len(sel_bc)>0:
-                fz = [(it, editdistance.eval(it, bc)) for it in sel_bc]
-                fz = [it for it in fz if it[1]<=max_dist]
-                fz.sort(key=lambda x:x[1])
-                if len(fz)==0:
+            sel_bc = get_sel_bc(bc, start_km_array, mid_km_array, end_km_array)
+            if len(sel_bc) > 0:
+                fz = np.array([(it, editdistance.eval(it, bc)) for it in sel_bc])
+                fz = fz[fz[:, 1] <= max_dist]
+                fz = fz[fz[:, 1].argsort(kind='mergesort')]
+                if len(fz) == 0:
                     continue
-                if len(fz)>1 and fz[0][1]==fz[1][1]:
-                    if editdistance.eval(fz[0][0][:-1], bc[-1])>editdistance.eval(fz[1][0][:-1], bc[-1]):  # higher error rate in the last base of the barcode
+                if len(fz) > 1 and fz[0][1] == fz[1][1]:
+                    if editdistance.eval(fz[0][0][:-1], bc[-1]) > editdistance.eval(fz[1][0][:-1], bc[-1]):
                         fuzzy_match += 1
                         bc_matching_dict[bc] = fz[1][0]
-                    elif editdistance.eval(fz[0][0][:-1], bc[-1])<editdistance.eval(fz[1][0][:-1], bc[-1]):
+                    elif editdistance.eval(fz[0][0][:-1], bc[-1]) < editdistance.eval(fz[1][0][:-1], bc[-1]):
                         fuzzy_match += 1
                         bc_matching_dict[bc] = fz[0][0]
                 else:
                     fuzzy_match += 1
                     bc_matching_dict[bc] = fz[0][0]
-    return bc_matching_dict,exact_match,fuzzy_match
+
+    return bc_matching_dict, exact_match, fuzzy_match
+
+
+def get_sel_bc(bc, start_km_array, mid_km_array, end_km_array):
+    sel_bc = []
+    if bc[:6] in start_km_array:
+        sel_bc += list(start_km[bc[:6]])
+    if bc[-6:] in end_km_array:
+        sel_bc += list(end_km[bc[-6:]])
+    if bc[4:10] in mid_km_array:
+        sel_bc += list(mid_km[bc[4:10]])
+    return set(sel_bc)
 
 def split_list(li, trunk_size=3000):
     new_li = []
